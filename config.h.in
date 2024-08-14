@@ -1,0 +1,5 @@
+// clang-format off
+#define PROJECT_NAME "@PROJECT_NAME@"
+#define VERSION_MAJOR @jsh_VERSION_MAJOR@
+#define VERSION_MINOR @jsh_VERSION_MINOR@
+#define SRC_DIR "@PROJECT_SOURCE_DIR@"
