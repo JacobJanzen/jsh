@@ -1,3 +1,4 @@
+#include "lexer.h"
 #include "grammar.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,6 +29,7 @@ int can_be_assignment;
 int can_be_grammatical_assignment = 1;
 int can_be_grammatical_name = 0;
 int first_char;
+FILE *file;
 
 static void string_append(struct string *s, char c)
 {
@@ -49,7 +51,7 @@ static void recognize_token(struct string *str, enum token_delimeter del)
     while (!done) {
         char c;
         if (saved_char == -1)
-            c = getchar();
+            c = getc(file);
         else
             c = saved_char;
         saved_char = -1;
@@ -62,7 +64,7 @@ static void recognize_token(struct string *str, enum token_delimeter del)
                 done = 1;
         } else {
             if (c == '\\') {
-                c = getchar();
+                c = getc(file);
 
                 if (c == 0 || c == EOF) {
                     string_append(str, '\\');
@@ -76,7 +78,7 @@ static void recognize_token(struct string *str, enum token_delimeter del)
                 can_be_io_number = 0;
             } else if (c == '$') {
                 string_append(str, c);
-                c = getchar();
+                c = getc(file);
 
                 if (c == 0 || c == EOF) {
                     done = 1;
@@ -86,7 +88,7 @@ static void recognize_token(struct string *str, enum token_delimeter del)
                     recognize_token(str, DEL_RBRACE);
                 } else if (c == '(') {
                     string_append(str, c);
-                    c = getchar();
+                    c = getc(file);
 
                     if (c == 0 || c == EOF) {
                         done = 1;
@@ -153,9 +155,9 @@ static void recognize_token(struct string *str, enum token_delimeter del)
                 done = 1;
             } else if (c == '#' && del != DEL_DQUOTE && del != DEL_DRPAR) {
                 /* identify comment */
-                c = getchar();
+                c = getc(file);
                 while (c != '\n' && c != 0)
-                    c = getchar();
+                    c = getc(file);
                 saved_char = c;
             } else {
                 /* add anything else to the word */
@@ -180,16 +182,23 @@ int yylex(void)
 {
     int c;
     if (saved_char == -1)
-        c = getchar();
+        c = getc(file);
     else
         c = saved_char;
     saved_char = -1;
 
+    /* skip whitespace */
     while (is_blank(c) && c != 0)
-        c = getchar();
+        c = getc(file);
+
+    /* skip comment */
+    if (c == '#') {
+        while (c != '\n' && c != 0)
+            c = getc(file);
+    }
 
     switch (c) {
-    case 0:
+    case 0: /* fallthrough */
     case EOF:
         printf("EOF ");
         return YYEOF;
@@ -198,7 +207,7 @@ int yylex(void)
         can_be_grammatical_assignment = 1;
         return NEWLINE;
     case '&':
-        c = getchar();
+        c = getc(file);
         if (c == '&') {
             printf("AND_IF ");
             return AND_IF;
@@ -207,7 +216,7 @@ int yylex(void)
         printf("& ");
         return '&';
     case '|':
-        c = getchar();
+        c = getc(file);
         if (c == '|') {
             printf("OR_IF ");
             return OR_IF;
@@ -216,7 +225,7 @@ int yylex(void)
         printf("| ");
         return '|';
     case ';':
-        c = getchar();
+        c = getc(file);
         if (c == ';') {
             printf("DSEMI ");
             return DSEMI;
@@ -225,9 +234,9 @@ int yylex(void)
         printf("; ");
         return ';';
     case '<':
-        c = getchar();
+        c = getc(file);
         if (c == '<') {
-            c = getchar();
+            c = getc(file);
             if (c == '-') {
                 printf("DLESSDASH ");
                 return DLESSDASH;
@@ -248,7 +257,7 @@ int yylex(void)
         printf("< ");
         return '<';
     case '>':
-        c = getchar();
+        c = getc(file);
         if (c == '>') {
             printf("DGREAT ");
             return DGREAT;
@@ -264,7 +273,7 @@ int yylex(void)
         saved_char = c;
         printf("> ");
         return '>';
-    case '(':
+    case '(': /* fallthrough */
     case ')':
         printf("%c ", c);
         return c;
@@ -371,11 +380,11 @@ int yylex(void)
         }
         if (can_be_name) {
             if (saved_char == -1)
-                c = getchar();
+                c = getc(file);
             else
                 c = saved_char;
             while (is_blank(c) && c != 0)
-                c = getchar();
+                c = getc(file);
             saved_char = c;
             if (can_be_grammatical_name || c == '(') {
                 printf("NAME(%s) ", str->container);
@@ -389,11 +398,11 @@ int yylex(void)
         if (can_be_io_number) {
             can_be_grammatical_assignment = 0;
             if (saved_char == -1)
-                c = getchar();
+                c = getc(file);
             else
                 c = saved_char;
             while (is_blank(c) && c != 0)
-                c = getchar();
+                c = getc(file);
             saved_char = c;
             if (c == '<' || c == '>') {
                 printf("IO_NUMBER(%s) ", str->container);
@@ -409,3 +418,9 @@ int yylex(void)
 }
 
 void yyerror(char const *s) { fprintf(stderr, "%s\n", s); }
+
+int yyparse_wrapper(FILE *f)
+{
+    file = f;
+    return yyparse();
+}

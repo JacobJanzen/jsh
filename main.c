@@ -1,10 +1,10 @@
 #include "config.h"
-#include "grammar.h"
+#include "lexer.h"
 #include <getopt.h>
 #include <stdio.h>
 #include <string.h>
 
-void print_version()
+static void print_version()
 {
     printf("%s version %d.%d\n", PROJECT_NAME, VERSION_MAJOR, VERSION_MINOR);
     printf("Copyright (C) 2024 Jacob Janzen\n");
@@ -16,7 +16,7 @@ void print_version()
     printf("There is NO WARRANTY, to the extent permitted by the law\n");
 }
 
-void print_help()
+static void print_help()
 {
     printf("%s version %d.%d\n", PROJECT_NAME, VERSION_MAJOR, VERSION_MINOR);
     printf("Usage: %s [options] ...\n", PROJECT_NAME);
@@ -32,18 +32,18 @@ void print_help()
 int main(int argc, char **argv)
 {
     int c;
-    while (1) {
-        int this_option_optind = optind ? optind : 1;
-        int option_index = 0;
-        static struct option long_options[] = {
-            {"version", no_argument, 0, 0},
-            {"help", no_argument, 0, 0},
-        };
+    char *run_command = NULL;
 
-        c = getopt_long(argc, argv, "c:", long_options, &option_index);
-        if (c == -1)
-            break;
+    int this_option_optind = optind ? optind : 1;
+    int option_index = 0;
+    static struct option long_options[] = {
+        {"version", no_argument, 0, 0},
+        {"help", no_argument, 0, 0},
+        {0, 0, 0, 0},
+    };
 
+    while ((c = getopt_long(argc, argv, "c:?", long_options, &option_index)) !=
+           -1) {
         switch (c) {
         case 0:
             if (strcmp(long_options[option_index].name, "version") == 0) {
@@ -56,11 +56,26 @@ int main(int argc, char **argv)
             }
             break;
         case 'c':
-            printf("TODO: run command not yet implemented\n");
-            return 1;
+            run_command = optarg;
+            break;
         case '?':
             return 1;
         }
     }
-    return yyparse();
+
+    FILE *file;
+    if (run_command) {
+        file = fmemopen(run_command, strlen(run_command), "r");
+    } else if (optind < argc) {
+        file = fopen(argv[optind], "r");
+        if (!file) {
+            fprintf(stderr, "%s: ", argv[optind]);
+            perror("");
+            return 1;
+        }
+    } else {
+        file = stdin;
+    }
+
+    return yyparse_wrapper(file);
 }
