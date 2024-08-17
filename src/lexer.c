@@ -25,6 +25,9 @@ int saved_char = -1;
 int can_be_io_number;
 int can_be_name;
 int can_be_assignment;
+int can_be_grammatical_assignment = 1;
+int can_be_grammatical_name = 0;
+int first_char;
 
 static void string_append(struct string *s, char c)
 {
@@ -161,7 +164,7 @@ static void recognize_token(struct string *str, enum token_delimeter del)
                 if ((c <= 'a' || c >= 'z') && (c <= 'A' || c >= 'Z') &&
                     (c <= '0' || c >= '9') && c != '_') {
                     can_be_name = 0;
-                    if (c == '=') {
+                    if (c == '=' && !first_char) {
                         can_be_assignment = 1;
                     }
                 }
@@ -169,6 +172,7 @@ static void recognize_token(struct string *str, enum token_delimeter del)
                     can_be_io_number = 0;
             }
         }
+        first_char = 0;
     }
 }
 
@@ -191,6 +195,7 @@ int yylex(void)
         return YYEOF;
     case '\n':
         printf("\n");
+        can_be_grammatical_assignment = 1;
         return NEWLINE;
     case '&':
         c = getchar();
@@ -264,6 +269,7 @@ int yylex(void)
         printf("%c ", c);
         return c;
     default: {
+        saved_char = c;
         if ((c <= 'a' || c >= 'z') && (c <= 'A' || c >= 'Z') && c != '_')
             can_be_name = 0;
         else
@@ -278,87 +284,124 @@ int yylex(void)
         str->capacity = DEFAULT_CAPACITY;
         str->size = 0;
         str->container = malloc(DEFAULT_CAPACITY);
-        string_append(str, c);
+        first_char = 1;
         recognize_token(str, DEL_DEFAULT);
 
         yylval = str->container;
         if (strcmp(str->container, "!") == 0) {
+            can_be_grammatical_assignment = 0;
             printf("Bang ");
             return Bang;
         }
         if (strcmp(str->container, "{") == 0) {
+            can_be_grammatical_assignment = 0;
             printf("Lbrace ");
             return Lbrace;
         }
         if (strcmp(str->container, "}") == 0) {
+            can_be_grammatical_assignment = 0;
             printf("Rbrace ");
             return Rbrace;
         }
         if (strcmp(str->container, "case") == 0) {
+            can_be_grammatical_assignment = 0;
             printf("Case ");
             return Case;
         }
         if (strcmp(str->container, "do") == 0) {
+            can_be_grammatical_assignment = 0;
             printf("Do ");
             return Do;
         }
         if (strcmp(str->container, "done") == 0) {
+            can_be_grammatical_assignment = 0;
             printf("Done ");
             return Done;
         }
         if (strcmp(str->container, "elif") == 0) {
+            can_be_grammatical_assignment = 0;
             printf("Elif ");
             return Elif;
         }
         if (strcmp(str->container, "else") == 0) {
+            can_be_grammatical_assignment = 0;
             printf("Else ");
             return Else;
         }
         if (strcmp(str->container, "esac") == 0) {
+            can_be_grammatical_assignment = 0;
             printf("Esac ");
             return Esac;
         }
         if (strcmp(str->container, "fi") == 0) {
+            can_be_grammatical_assignment = 0;
             printf("Fi ");
             return Fi;
         }
         if (strcmp(str->container, "for") == 0) {
+            can_be_grammatical_assignment = 0;
+            can_be_grammatical_name = 1;
             printf("For ");
             return For;
         }
         if (strcmp(str->container, "if") == 0) {
+            can_be_grammatical_assignment = 0;
             printf("If ");
             return If;
         }
         if (strcmp(str->container, "in") == 0) {
+            can_be_grammatical_assignment = 0;
             printf("In ");
             return In;
         }
         if (strcmp(str->container, "then") == 0) {
+            can_be_grammatical_assignment = 0;
             printf("Then ");
             return Then;
         }
         if (strcmp(str->container, "until") == 0) {
+            can_be_grammatical_assignment = 0;
             printf("Until ");
             return Until;
         }
         if (strcmp(str->container, "while") == 0) {
+            can_be_grammatical_assignment = 0;
             printf("While ");
             return While;
         }
         if (can_be_name) {
-            printf("NAME(%s) ", str->container);
-            return NAME;
+            if (saved_char == -1)
+                c = getchar();
+            else
+                c = saved_char;
+            while (is_blank(c) && c != 0)
+                c = getchar();
+            saved_char = c;
+            if (can_be_grammatical_name || c == '(') {
+                printf("NAME(%s) ", str->container);
+                return NAME;
+            }
         }
-        if (can_be_assignment) {
+        if (can_be_assignment && can_be_grammatical_assignment) {
             printf("ASSIGNMENT_WORD(%s) ", str->container);
             return ASSIGNMENT_WORD;
         }
         if (can_be_io_number) {
-            printf("IO_NUMBER(%s) ", str->container);
-            return IO_NUMBER;
+            can_be_grammatical_assignment = 0;
+            if (saved_char == -1)
+                c = getchar();
+            else
+                c = saved_char;
+            while (is_blank(c) && c != 0)
+                c = getchar();
+            saved_char = c;
+            if (c == '<' || c == '>') {
+                printf("IO_NUMBER(%s) ", str->container);
+                return IO_NUMBER;
+            }
         }
 
+        can_be_grammatical_assignment = 0;
         printf("WORD(%s) ", str->container);
         return WORD;
     }
