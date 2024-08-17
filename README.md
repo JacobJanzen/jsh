@@ -3,7 +3,7 @@
 This is a POSIX-compliant shell implementation. (Not yet completed).
 
 ## TODO
-### LEXER
+### Lexer
 - here-document lexing
 - lexer/parser tests
 ### Expansion
