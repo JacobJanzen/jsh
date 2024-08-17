@@ -3,8 +3,10 @@
 This is a POSIX-compliant shell implementation. (Not yet completed).
 
 ## TODO
+### LEXER
 - here-document lexing
-- expansions
-- redirection 
-- execution
-- builtins
+- lexer/parser tests
+### Expansion
+### Redirection
+### Execution
+### CI
