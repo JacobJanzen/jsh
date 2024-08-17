@@ -1,10 +1,3 @@
-#include <config.h>
-#include <stdio.h>
+#include "grammar.h"
 
-int main(void)
-{
-    printf("%s %d.%d\n", PROJECT_NAME, VERSION_MAJOR, VERSION_MINOR);
-    printf("Hello, world!\n");
-
-    return 0;
-}
+int main(void) { return yyparse(); }

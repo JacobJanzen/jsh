@@ -1,6 +1,6 @@
 %{
 #include <stdio.h>
-#include "../src/lexer.h"
+#include "lexer.h"
 %}
 
 %define api.value.type {char *}

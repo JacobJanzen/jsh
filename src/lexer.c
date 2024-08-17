@@ -1,4 +1,4 @@
-#include "../build/grammar.h"
+#include "grammar.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -409,5 +409,3 @@ int yylex(void)
 }
 
 void yyerror(char const *s) { fprintf(stderr, "%s\n", s); }
-
-int main(void) { return yyparse(); }
