@@ -51,7 +51,7 @@ static void recognize_token(struct string *str, enum token_delimeter del)
             c = saved_char;
         saved_char = -1;
 
-        if (c == 0) {
+        if (c == 0 || c == EOF) {
             done = 1;
         } else if (del == DEL_QUOTE) {
             string_append(str, c);
@@ -61,7 +61,7 @@ static void recognize_token(struct string *str, enum token_delimeter del)
             if (c == '\\') {
                 c = getchar();
 
-                if (c == 0) {
+                if (c == 0 || c == EOF) {
                     string_append(str, '\\');
                     done = 1;
                 } else if (c != '\n') {
@@ -75,7 +75,7 @@ static void recognize_token(struct string *str, enum token_delimeter del)
                 string_append(str, c);
                 c = getchar();
 
-                if (c == 0) {
+                if (c == 0 || c == EOF) {
                     done = 1;
                 } else if (c == '{') {
                     /* identify parameter expansion */
@@ -85,7 +85,7 @@ static void recognize_token(struct string *str, enum token_delimeter del)
                     string_append(str, c);
                     c = getchar();
 
-                    if (c == 0) {
+                    if (c == 0 || c == EOF) {
                         done = 1;
                     } else if (c == '(') {
                         /* identify arithmetic expansion */
@@ -185,6 +185,10 @@ int yylex(void)
         c = getchar();
 
     switch (c) {
+    case 0:
+    case EOF:
+        printf("EOF ");
+        return YYEOF;
     case '\n':
         printf("\n");
         return NEWLINE;

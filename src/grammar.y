@@ -41,7 +41,7 @@
 %token In
 
 %%
-default : If
+default : If NEWLINE
         ;
 
 %%
