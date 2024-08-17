@@ -1,434 +1,366 @@
-#include "lexer.h"
-#include "stack.h"
+#include "../build/grammar.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#define DEFAULT_IDENTIFIER_SIZE 16
+#define DEFAULT_CAPACITY 16
 
-enum environment {
-    default_environment,
-    double_quote,
-    substitution,
-    backtick_substitution,
-    backtick_substitution2,
-    parameter_expansion,
-    arithmetic_expansion,
+enum token_delimeter {
+    DEL_DEFAULT,
+    DEL_DQUOTE,
+    DEL_QUOTE,
+    DEL_RPAR,
+    DEL_DRPAR,
+    DEL_RBRACE,
+    DEL_BACKQUOTE,
 };
 
-static char *append_string(char *str, size_t *size, size_t *capacity, char ch)
+struct string {
+    char *container;
+    size_t size;
+    size_t capacity;
+};
+
+int saved_char = -1;
+int can_be_io_number;
+int can_be_name;
+int can_be_assignment;
+
+static void string_append(struct string *s, char c)
 {
-    if (!str || !size || !capacity)
-        return NULL;
-    if (size == capacity) {
-        *capacity *= 2;
-        str = realloc(str, *capacity);
-        if (!str) {
-            perror("realloc");
-            return NULL;
-        }
+    if (s->size == s->capacity) {
+        s->capacity *= 2;
+        s->container = realloc(s->container, s->capacity);
     }
-    str[(*size)++] = ch;
-
-    return str;
-}
-static inline int is_blank(char ch)
-{
-    return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '\f' ||
-           ch == '\v';
+    s->container[s->size++] = c;
 }
 
-static inline char peek_char(struct lexer *lex)
+static int is_blank(char c)
 {
-    return lex->read_position >= lex->input_len
-               ? 0
-               : lex->input[lex->read_position];
+    return c == ' ' || c == '\t' || c == '\f' || c == '\v';
 }
 
-static void read_char(struct lexer *lex)
+static void recognize_token(struct string *str, enum token_delimeter del)
 {
-    if (lex->read_position >= lex->input_len) {
-        lex->ch = 0;
-    } else {
-        lex->ch = lex->input[lex->read_position];
-    }
-    lex->position = lex->read_position;
-    ++(lex->read_position);
-}
-
-static struct token_pair read_token(struct lexer *lex)
-{
-    struct token_pair tp = {
-        .tok = TOK_ILLEGAL,
-        .value = NULL,
-    };
-
-    size_t capacity = DEFAULT_IDENTIFIER_SIZE;
-    size_t size = 0;
-    char *identifier = malloc(capacity);
-    if (!identifier) {
-        perror("malloc");
-        return tp;
-    }
-
-    struct stack *nested_environment = stack_create();
-    enum environment curr_environment = default_environment;
-    int in_backslash = 0;
-    int in_single_quote = 0;
     int done = 0;
-
-    while (is_blank(lex->ch) && lex->ch != '\n')
-        read_char(lex);
     while (!done) {
-        if (lex->ch == 0) {
+        char c;
+        if (saved_char == -1)
+            c = getchar();
+        else
+            c = saved_char;
+        saved_char = -1;
+
+        if (c == 0) {
             done = 1;
-        } else if (lex->ch == '\\' && !in_backslash && !in_single_quote) {
-            in_backslash = 1;
-            append_string(identifier, &size, &capacity, lex->ch);
-            read_char(lex);
-            continue; // exit backslash mode at the end of the loop
-        } else if (lex->ch == '\'' && !in_backslash &&
-                   curr_environment != double_quote &&
-                   curr_environment != arithmetic_expansion &&
-                   !in_single_quote) {
-            in_single_quote = 1;
-            append_string(identifier, &size, &capacity, lex->ch);
-            read_char(lex);
-        } else if (lex->ch == '"' && !in_backslash && !in_single_quote &&
-                   curr_environment != double_quote) {
-            curr_environment = double_quote;
-            stack_push(nested_environment, &curr_environment);
-            append_string(identifier, &size, &capacity, lex->ch);
-            read_char(lex);
-        } else if (lex->ch == '$' && !in_backslash && !in_single_quote) {
-            append_string(identifier, &size, &capacity, lex->ch);
-            read_char(lex);
-            if (lex->ch == '(') {
-                append_string(identifier, &size, &capacity, lex->ch);
-                read_char(lex);
-                if (lex->ch == '(') {
-                    curr_environment = arithmetic_expansion;
-                    append_string(identifier, &size, &capacity, lex->ch);
-                    read_char(lex);
-                } else {
-                    curr_environment = substitution;
+        } else if (del == DEL_QUOTE) {
+            string_append(str, c);
+            if (c == '\'')
+                done = 1;
+        } else {
+            if (c == '\\') {
+                c = getchar();
+
+                if (c == 0) {
+                    string_append(str, '\\');
+                    done = 1;
+                } else if (c != '\n') {
+                    /* don't save escaped newlines */
+                    string_append(str, '\\');
+                    string_append(str, c);
                 }
-            } else if (lex->ch == '{') {
-                curr_environment = parameter_expansion;
-                append_string(identifier, &size, &capacity, lex->ch);
-                read_char(lex);
-            }
-            stack_push(nested_environment, &curr_environment);
-        } else if (lex->ch == '`' && !in_single_quote && !in_backslash &&
-                   curr_environment != backtick_substitution) {
-            append_string(identifier, &size, &capacity, lex->ch);
-            read_char(lex);
-            curr_environment = backtick_substitution;
-            stack_push(nested_environment, &curr_environment);
-        } else if (lex->ch == '`' && !in_single_quote && in_backslash &&
-                   curr_environment == backtick_substitution) {
-            append_string(identifier, &size, &capacity, lex->ch);
-            read_char(lex);
-            curr_environment = backtick_substitution2;
-            stack_push(nested_environment, &curr_environment);
-        } else if (lex->ch == '\'' && !in_backslash &&
-                   curr_environment != double_quote &&
-                   curr_environment != arithmetic_expansion &&
-                   in_single_quote) {
-            append_string(identifier, &size, &capacity, lex->ch);
-            read_char(lex);
-            in_single_quote = 0;
-        } else if (lex->ch == '"' && !in_backslash && !in_single_quote &&
-                   curr_environment == double_quote) {
-            append_string(identifier, &size, &capacity, lex->ch);
-            read_char(lex);
-            enum environment *tmp = stack_pop(nested_environment);
-            if (!tmp)
-                curr_environment = default_environment;
-            else
-                curr_environment = *tmp;
-        } else if (lex->ch == ')' && peek_char(lex) == ')' && !in_backslash &&
-                   !in_single_quote &&
-                   curr_environment == arithmetic_expansion) {
-            append_string(identifier, &size, &capacity, lex->ch);
-            read_char(lex);
-            append_string(identifier, &size, &capacity, lex->ch);
-            read_char(lex);
-            enum environment *tmp = stack_pop(nested_environment);
-            if (!tmp)
-                curr_environment = default_environment;
-            else
-                curr_environment = *tmp;
-        } else if ((lex->ch == ')' && !in_backslash && !in_single_quote &&
-                    curr_environment == substitution) ||
-                   (lex->ch == '}' && !in_backslash && !in_single_quote &&
-                    curr_environment == parameter_expansion) ||
-                   (lex->ch == '`' && !in_single_quote && in_backslash &&
-                    curr_environment == backtick_substitution2) ||
-                   (lex->ch == '`' && !in_single_quote && !in_backslash &&
-                    curr_environment == backtick_substitution)) {
-            append_string(identifier, &size, &capacity, lex->ch);
-            read_char(lex);
-            enum environment *tmp = stack_pop(nested_environment);
-            if (!tmp)
-                curr_environment = default_environment;
-            else
-                curr_environment = *tmp;
-        } else if (!in_backslash && !in_single_quote &&
-                   curr_environment == default_environment &&
-                   (lex->ch == '&' || lex->ch == '|' || lex->ch == ';' ||
-                    lex->ch == '<' || lex->ch == '>' || lex->ch == '(' ||
-                    lex->ch == ')')) {
-            done = 1;
-        } else if (!in_backslash && !in_single_quote &&
-                   curr_environment == default_environment &&
-                   is_blank(lex->ch)) {
-            done = 1;
-            while (is_blank(lex->ch) && lex->ch != '\n')
-                read_char(lex);
-        } else if (!in_backslash && !in_single_quote &&
-                   curr_environment == default_environment && lex->ch == '#') {
-            while (lex->ch != '\n')
-                read_char(lex);
-        } else {
-            append_string(identifier, &size, &capacity, lex->ch);
-            read_char(lex);
-        }
+                can_be_name = 0;
+                can_be_io_number = 0;
+            } else if (c == '$') {
+                string_append(str, c);
+                c = getchar();
 
-        in_backslash = 0;
-    }
-    append_string(identifier, &size, &capacity, 0);
+                if (c == 0) {
+                    done = 1;
+                } else if (c == '{') {
+                    /* identify parameter expansion */
+                    string_append(str, c);
+                    recognize_token(str, DEL_RBRACE);
+                } else if (c == '(') {
+                    string_append(str, c);
+                    c = getchar();
 
-    if (!identifier)
-        return tp;
+                    if (c == 0) {
+                        done = 1;
+                    } else if (c == '(') {
+                        /* identify arithmetic expansion */
+                        string_append(str, c);
+                        recognize_token(str, DEL_DRPAR);
 
-    tp.value = identifier;
-    if (strcmp(identifier, "!") == 0)
-        tp.tok = TOK_BANG;
-    else if (strcmp(identifier, "{") == 0)
-        tp.tok = TOK_LBRACE;
-    else if (strcmp(identifier, "}") == 0)
-        tp.tok = TOK_RBRACE;
-    else if (strcmp(identifier, "case") == 0)
-        tp.tok = TOK_CASE;
-    else if (strcmp(identifier, "do") == 0)
-        tp.tok = TOK_DO;
-    else if (strcmp(identifier, "done") == 0)
-        tp.tok = TOK_DONE;
-    else if (strcmp(identifier, "elif") == 0)
-        tp.tok = TOK_ELIF;
-    else if (strcmp(identifier, "else") == 0)
-        tp.tok = TOK_ELSE;
-    else if (strcmp(identifier, "esac") == 0)
-        tp.tok = TOK_ESAC;
-    else if (strcmp(identifier, "fi") == 0)
-        tp.tok = TOK_FI;
-    else if (strcmp(identifier, "for") == 0)
-        tp.tok = TOK_FOR;
-    else if (strcmp(identifier, "if") == 0)
-        tp.tok = TOK_IF;
-    else if (strcmp(identifier, "then") == 0)
-        tp.tok = TOK_THEN;
-    else if (strcmp(identifier, "until") == 0)
-        tp.tok = TOK_UNTIL;
-    else if (strcmp(identifier, "while") == 0)
-        tp.tok = TOK_WHILE;
-
-    // TODO REDIRECTION
-    // TODO HERE_DOCUMENT
-    // TODO NAME in for
-    // TODO Third word of for and case
-    // TODO assignment preceding command name
-    // TODO NAME in function
-    // TODO Body of function
-    else
-        tp.tok = TOK_WORD;
-
-    return tp;
-}
-
-struct lexer *lexer_create(char *input)
-{
-    struct lexer *lex = malloc(sizeof(struct lexer));
-    if (!lex) {
-        perror("malloc");
-        return NULL;
-    }
-    lex->input = input;
-    lex->input_len = strlen(input);
-    lex->position = 0;
-    lex->read_position = 0;
-    read_char(lex);
-    return lex;
-}
-
-void lexer_free(struct lexer *lex)
-{
-    if (lex)
-        free(lex);
-}
-
-struct token_pair lexer_next(struct lexer *lex)
-{
-    struct token_pair tp = {
-        .tok = TOK_ILLEGAL,
-        .value = NULL,
-    };
-
-    switch (lex->ch) {
-    case '&':
-        if (peek_char(lex) == '&') {
-            read_char(lex);
-            tp.tok = TOK_AND_IF;
-            tp.value = malloc(3);
-            tp.value[0] = '&';
-            tp.value[1] = '&';
-            tp.value[2] = 0;
-        } else {
-            tp.tok = TOK_AMPERSAND;
-            tp.value = malloc(2);
-            tp.value[0] = '&';
-            tp.value[1] = 0;
-        }
-        read_char(lex);
-        break;
-    case '|':
-        if (peek_char(lex) == '|') {
-            read_char(lex);
-            tp.tok = TOK_OR_IF;
-            tp.value = malloc(3);
-            tp.value[0] = '|';
-            tp.value[1] = '|';
-            tp.value[2] = 0;
-        } else {
-            tp.tok = TOK_PIPE;
-            tp.value = malloc(2);
-            tp.value[0] = '|';
-            tp.value[1] = 0;
-        }
-        read_char(lex);
-        break;
-    case ';':
-        if (peek_char(lex) == ';') {
-            read_char(lex);
-            tp.tok = TOK_DSEMI;
-            tp.value = malloc(3);
-            tp.value[0] = ';';
-            tp.value[1] = ';';
-            tp.value[2] = 0;
-        } else {
-            tp.tok = TOK_SEMICOLON;
-            tp.value = malloc(2);
-            tp.value[0] = ';';
-            tp.value[1] = 0;
-        }
-        read_char(lex);
-        break;
-    case '<':
-        if (peek_char(lex) == '<') {
-            read_char(lex);
-            if (peek_char(lex) == '-') {
-                read_char(lex);
-                tp.tok = TOK_DLESSDASH;
-                tp.value = malloc(4);
-                tp.value[0] = '<';
-                tp.value[1] = '<';
-                tp.value[2] = '-';
-                tp.value[3] = 0;
+                    } else {
+                        /* identify command substitution */
+                        saved_char = c;
+                        recognize_token(str, DEL_RPAR);
+                    }
+                } else {
+                    saved_char = c;
+                }
+                can_be_name = 0;
+                can_be_io_number = 0;
+            } else if (c == '`') {
+                /* identify command substitution */
+                string_append(str, c);
+                if (del == DEL_BACKQUOTE) {
+                    done = 1;
+                } else {
+                    recognize_token(str, DEL_BACKQUOTE);
+                }
+                can_be_name = 0;
+                can_be_io_number = 0;
+            } else if (c == '}' && del == DEL_RBRACE) {
+                /* close parameter expansion */
+                string_append(str, c);
+                done = 1;
+            } else if (c == ')' && (del == DEL_RPAR || del == DEL_DRPAR)) {
+                /* close command substitution or drop into command substitution
+                 * mode if in arithmetic expansion */
+                string_append(str, c);
+                if (del == DEL_DRPAR) {
+                    recognize_token(str, DEL_RPAR);
+                }
+                done = 1;
+            } else if (c == '\'' && del != DEL_DQUOTE && del != DEL_DRPAR) {
+                /* identify single quote */
+                string_append(str, c);
+                recognize_token(str, DEL_QUOTE);
+                can_be_name = 0;
+                can_be_io_number = 0;
+            } else if (c == '\"' && del != DEL_RBRACE) {
+                /* identify double quote */
+                string_append(str, c);
+                if (del == DEL_DQUOTE) {
+                    done = 1;
+                } else {
+                    recognize_token(str, DEL_DQUOTE);
+                }
+                can_be_name = 0;
+                can_be_io_number = 0;
+            } else if (del == DEL_DEFAULT &&
+                       (c == '&' || c == '|' || c == ';' || c == '<' ||
+                        c == '>' || c == '(' || c == ')' || c == '\n' ||
+                        is_blank(c))) {
+                /* identify end of word by operator or blank */
+                string_append(str, 0);
+                saved_char = c;
+                done = 1;
+            } else if (c == '#' && del != DEL_DQUOTE && del != DEL_DRPAR) {
+                /* identify comment */
+                c = getchar();
+                while (c != '\n' && c != 0)
+                    c = getchar();
+                saved_char = c;
             } else {
-                tp.tok = TOK_DLESS;
-                tp.value = malloc(3);
-                tp.value[0] = '<';
-                tp.value[1] = '<';
-                tp.value[2] = 0;
+                /* add anything else to the word */
+                string_append(str, c);
+
+                if ((c <= 'a' || c >= 'z') && (c <= 'A' || c >= 'Z') &&
+                    (c <= '0' || c >= '9') && c != '_') {
+                    can_be_name = 0;
+                    if (c == '=') {
+                        can_be_assignment = 1;
+                    }
+                }
+                if (c <= '0' || c >= '9')
+                    can_be_io_number = 0;
             }
-        } else if (peek_char(lex) == '&') {
-            read_char(lex);
-            tp.tok = TOK_LESSAND;
-            tp.value = malloc(3);
-            tp.value[0] = '<';
-            tp.value[1] = '&';
-            tp.value[2] = 0;
-        } else if (peek_char(lex) == '>') {
-            read_char(lex);
-            tp.tok = TOK_LESSGREAT;
-            tp.value = malloc(3);
-            tp.value[0] = '<';
-            tp.value[1] = '>';
-            tp.value[2] = 0;
-        } else {
-            tp.tok = TOK_LESS;
-            tp.value = malloc(2);
-            tp.value[0] = '<';
-            tp.value[1] = 0;
         }
-        read_char(lex);
-        break;
-    case '>':
-        if (peek_char(lex) == '>') {
-            read_char(lex);
-            tp.tok = TOK_DGREAT;
-            tp.value = malloc(3);
-            tp.value[0] = '>';
-            tp.value[1] = '>';
-            tp.value[2] = 0;
-        } else if (peek_char(lex) == '&') {
-            read_char(lex);
-            tp.tok = TOK_GREATAND;
-            tp.value = malloc(3);
-            tp.value[0] = '>';
-            tp.value[1] = '&';
-            tp.value[2] = 0;
-        } else if (peek_char(lex) == '|') {
-            read_char(lex);
-            tp.tok = TOK_CLOBBER;
-            tp.value = malloc(3);
-            tp.value[0] = '>';
-            tp.value[1] = '|';
-            tp.value[2] = 0;
-        } else {
-            tp.tok = TOK_GREAT;
-            tp.value = malloc(2);
-            tp.value[0] = '>';
-            tp.value[1] = 0;
-        }
-        read_char(lex);
-        break;
-    case '(':
-        tp.tok = TOK_LPAREN;
-        tp.value = malloc(2);
-        tp.value[0] = '(';
-        tp.value[1] = 0;
-        read_char(lex);
-        break;
-    case ')':
-        tp.tok = TOK_RPAREN;
-        tp.value = malloc(2);
-        tp.value[0] = ')';
-        tp.value[1] = 0;
-        read_char(lex);
-        break;
-    case '\n':
-        tp.tok = TOK_NEWLINE;
-        tp.value = malloc(2);
-        tp.value[0] = '\n';
-        tp.value[1] = 0;
-        read_char(lex);
-        break;
-    case 0:
-        tp.tok = TOK_EOF;
-        tp.value = malloc(1);
-        tp.value[0] = 0;
-        break;
-    default:
-        tp = read_token(lex);
     }
-
-    return tp;
 }
 
-void lexer_token_pair_free(struct token_pair *tp)
+int yylex(void)
 {
-    if (tp->value)
-        free(tp->value);
+    int c;
+    if (saved_char == -1)
+        c = getchar();
+    else
+        c = saved_char;
+    saved_char = -1;
+
+    while (is_blank(c) && c != 0)
+        c = getchar();
+
+    switch (c) {
+    case '\n':
+        printf("\n");
+        return NEWLINE;
+    case '&':
+        c = getchar();
+        if (c == '&') {
+            printf("AND_IF ");
+            return AND_IF;
+        }
+        saved_char = c;
+        printf("& ");
+        return '&';
+    case '|':
+        c = getchar();
+        if (c == '|') {
+            printf("OR_IF ");
+            return OR_IF;
+        }
+        saved_char = c;
+        printf("| ");
+        return '|';
+    case ';':
+        c = getchar();
+        if (c == ';') {
+            printf("DSEMI ");
+            return DSEMI;
+        }
+        saved_char = c;
+        printf("; ");
+        return ';';
+    case '<':
+        c = getchar();
+        if (c == '<') {
+            c = getchar();
+            if (c == '-') {
+                printf("DLESSDASH ");
+                return DLESSDASH;
+            }
+            saved_char = c;
+            printf("DLESS ");
+            return DLESS;
+        }
+        if (c == '&') {
+            printf("LESSAND ");
+            return LESSAND;
+        }
+        if (c == '>') {
+            printf("LESSGREAT ");
+            return LESSGREAT;
+        }
+        saved_char = c;
+        printf("< ");
+        return '<';
+    case '>':
+        c = getchar();
+        if (c == '>') {
+            printf("DGREAT ");
+            return DGREAT;
+        }
+        if (c == '&') {
+            printf("GREATAND ");
+            return GREATAND;
+        }
+        if (c == '|') {
+            printf("CLOBBER ");
+            return CLOBBER;
+        }
+        saved_char = c;
+        printf("> ");
+        return '>';
+    case '(':
+    case ')':
+        printf("%c ", c);
+        return c;
+    default: {
+        if ((c <= 'a' || c >= 'z') && (c <= 'A' || c >= 'Z') && c != '_')
+            can_be_name = 0;
+        else
+            can_be_name = 1;
+        can_be_assignment = 0;
+        if (c >= '0' && c <= '9')
+            can_be_io_number = 1;
+        else
+            can_be_io_number = 0;
+
+        struct string *str = malloc(sizeof(struct string));
+        str->capacity = DEFAULT_CAPACITY;
+        str->size = 0;
+        str->container = malloc(DEFAULT_CAPACITY);
+        string_append(str, c);
+        recognize_token(str, DEL_DEFAULT);
+
+        yylval = str->container;
+        if (strcmp(str->container, "!") == 0) {
+            printf("Bang ");
+            return Bang;
+        }
+        if (strcmp(str->container, "{") == 0) {
+            printf("Lbrace ");
+            return Lbrace;
+        }
+        if (strcmp(str->container, "}") == 0) {
+            printf("Rbrace ");
+            return Rbrace;
+        }
+        if (strcmp(str->container, "case") == 0) {
+            printf("Case ");
+            return Case;
+        }
+        if (strcmp(str->container, "do") == 0) {
+            printf("Do ");
+            return Do;
+        }
+        if (strcmp(str->container, "done") == 0) {
+            printf("Done ");
+            return Done;
+        }
+        if (strcmp(str->container, "elif") == 0) {
+            printf("Elif ");
+            return Elif;
+        }
+        if (strcmp(str->container, "else") == 0) {
+            printf("Else ");
+            return Else;
+        }
+        if (strcmp(str->container, "esac") == 0) {
+            printf("Esac ");
+            return Esac;
+        }
+        if (strcmp(str->container, "fi") == 0) {
+            printf("Fi ");
+            return Fi;
+        }
+        if (strcmp(str->container, "for") == 0) {
+            printf("For ");
+            return For;
+        }
+        if (strcmp(str->container, "if") == 0) {
+            printf("If ");
+            return If;
+        }
+        if (strcmp(str->container, "in") == 0) {
+            printf("In ");
+            return In;
+        }
+        if (strcmp(str->container, "then") == 0) {
+            printf("Then ");
+            return Then;
+        }
+        if (strcmp(str->container, "until") == 0) {
+            printf("Until ");
+            return Until;
+        }
+        if (strcmp(str->container, "while") == 0) {
+            printf("While ");
+            return While;
+        }
+        if (can_be_name) {
+            printf("NAME(%s) ", str->container);
+            return NAME;
+        }
+        if (can_be_assignment) {
+            printf("ASSIGNMENT_WORD(%s) ", str->container);
+            return ASSIGNMENT_WORD;
+        }
+        if (can_be_io_number) {
+            printf("IO_NUMBER(%s) ", str->container);
+            return IO_NUMBER;
+        }
+
+        printf("WORD(%s) ", str->container);
+        return WORD;
+    }
+    }
 }
+
+void yyerror(char const *s) { fprintf(stderr, "%s\n", s); }
+
+int main(void) { return yyparse(); }
