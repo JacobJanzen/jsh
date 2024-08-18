@@ -3,11 +3,12 @@ cmake_minimum_required(VERSION 3.10)
 project(jsh VERSION 0.1)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2")
 
 # Parser
 # ------
 find_package(BISON)
-BISON_TARGET(grammar src/grammar.y ${CMAKE_CURRENT_BINARY_DIR}/grammar.c COMPILE_FLAGS --header=${PROJECT_BINARY_DIR}/grammar.h)
+BISON_TARGET(grammar src/grammar.y ${CMAKE_CURRENT_BINARY_DIR}/grammar.c COMPILE_FLAGS "--header=${PROJECT_BINARY_DIR}/grammar.h")
 
 # MAIN EXECUTABLE
 # ---------------
