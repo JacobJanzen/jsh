@@ -49,6 +49,8 @@ struct token {
 
 struct lexer {
     FILE *stream;
+    int prev;
+    int prevprev;
 };
 
 struct token lexer_next(struct lexer *);

@@ -153,7 +153,7 @@ static void delimit_token(struct lexer *lex, struct string *str,
     }
 }
 
-static int recognize_token(struct string *str)
+static int recognize_token(struct lexer *lex, struct string *str)
 {
     if (str->size == 0)
         return ERROR;
@@ -163,58 +163,122 @@ static int recognize_token(struct string *str)
     int eligible_name = 1;
     int eligible_io_number = 1;
     int eligible_assignment_word = 0;
-    if ((str->container[0] <= 'a' || str->container[0] >= 'z') &&
-        (str->container[0] <= 'A' || str->container[0] >= 'Z') &&
+    if ((str->container[0] < 'a' || str->container[0] > 'z') &&
+        (str->container[0] < 'A' || str->container[0] > 'Z') &&
         str->container[0] != '_')
         eligible_name = 0;
-    for (size_t i = 0; i < str->size; ++i) {
-        if (str->container[i] == '=' && eligible_name)
+    for (size_t i = 0; i < str->size - 1; ++i) {
+        if (i > 0 && str->container[i] == '=')
             eligible_assignment_word = 1;
-        if (str->container[i] <= '0' || str->container[i] >= '9') {
+        if ((str->container[i] < 'a' || str->container[i] > 'z') &&
+            (str->container[i] < 'A' || str->container[i] > 'Z') &&
+            str->container[i] != '_') {
+            eligible_name = 0;
+        }
+        if (str->container[i] < '0' || str->container[i] > '9') {
             eligible_io_number = 0;
-            if ((str->container[0] <= 'a' || str->container[0] >= 'z') &&
-                (str->container[0] <= 'A' || str->container[0] >= 'Z') &&
-                str->container[0] != '_')
-                eligible_name = 0;
         }
     }
 
-    if (strcmp(str->container, "if") == 0)
-        return IF;
-    if (strcmp(str->container, "then") == 0)
-        return THEN;
-    if (strcmp(str->container, "else") == 0)
-        return ELSE;
-    if (strcmp(str->container, "elif") == 0)
-        return ELIF;
-    if (strcmp(str->container, "fi") == 0)
-        return FI;
-    if (strcmp(str->container, "do") == 0)
-        return DO;
-    if (strcmp(str->container, "done") == 0)
-        return DONE;
-    if (strcmp(str->container, "case") == 0)
-        return CASE;
-    if (strcmp(str->container, "esac") == 0)
-        return ESAC;
-    if (strcmp(str->container, "while") == 0)
-        return WHILE;
-    if (strcmp(str->container, "until") == 0)
-        return UNTIL;
-    if (strcmp(str->container, "for") == 0)
-        return FOR;
-    if (strcmp(str->container, "{") == 0)
-        return LBRACE;
-    if (strcmp(str->container, "}") == 0)
-        return RBRACE;
-    if (strcmp(str->container, "!") == 0)
-        return BANG;
-    if (strcmp(str->container, "in") == 0)
+    if (lex->prev == 0 || lex->prev == ';' || lex->prev == '&' ||
+        lex->prev == '|' || lex->prev == NEWLINE || lex->prev == BANG ||
+        lex->prev == AND_IF || lex->prev == OR_IF) {
+        if (strcmp(str->container, "if") == 0)
+            return IF;
+        if (strcmp(str->container, "then") == 0)
+            return THEN;
+        if (strcmp(str->container, "else") == 0)
+            return ELSE;
+        if (strcmp(str->container, "elif") == 0)
+            return ELIF;
+        if (strcmp(str->container, "fi") == 0)
+            return FI;
+        if (strcmp(str->container, "do") == 0)
+            return DO;
+        if (strcmp(str->container, "done") == 0)
+            return DONE;
+        if (strcmp(str->container, "case") == 0)
+            return CASE;
+        if (strcmp(str->container, "esac") == 0)
+            return ESAC;
+        if (strcmp(str->container, "while") == 0)
+            return WHILE;
+        if (strcmp(str->container, "until") == 0)
+            return UNTIL;
+        if (strcmp(str->container, "for") == 0)
+            return FOR;
+        if (strcmp(str->container, "{") == 0)
+            return LBRACE;
+        if (strcmp(str->container, "}") == 0)
+            return RBRACE;
+        if (strcmp(str->container, "!") == 0)
+            return BANG;
+        if (strcmp(str->container, "in") == 0)
+            return IN;
+
+        if (eligible_name) {
+            /* check for beginning of function */
+            int c = getc(lex->stream);
+            while (is_blank(c))
+                c = getc(lex->stream);
+            ungetc(c, lex->stream);
+            if (c == '(')
+                return NAME;
+        }
+    }
+    if (lex->prev == LBRACE || lex->prev == RBRACE || lex->prev == DO ||
+        lex->prev == DONE || lex->prev == ELIF || lex->prev == ELSE ||
+        lex->prev == ESAC || lex->prev == FI || lex->prev == IF ||
+        lex->prev == THEN || lex->prev == UNTIL || lex->prev == WHILE) {
+        if (strcmp(str->container, "if") == 0)
+            return IF;
+        if (strcmp(str->container, "then") == 0)
+            return THEN;
+        if (strcmp(str->container, "else") == 0)
+            return ELSE;
+        if (strcmp(str->container, "elif") == 0)
+            return ELIF;
+        if (strcmp(str->container, "fi") == 0)
+            return FI;
+        if (strcmp(str->container, "do") == 0)
+            return DO;
+        if (strcmp(str->container, "done") == 0)
+            return DONE;
+        if (strcmp(str->container, "case") == 0)
+            return CASE;
+        if (strcmp(str->container, "esac") == 0)
+            return ESAC;
+        if (strcmp(str->container, "while") == 0)
+            return WHILE;
+        if (strcmp(str->container, "until") == 0)
+            return UNTIL;
+        if (strcmp(str->container, "for") == 0)
+            return FOR;
+        if (strcmp(str->container, "{") == 0)
+            return LBRACE;
+        if (strcmp(str->container, "}") == 0)
+            return RBRACE;
+        if (strcmp(str->container, "!") == 0)
+            return BANG;
+        if (strcmp(str->container, "in") == 0)
+            return IN;
+    }
+    if (lex->prevprev == CASE && strcmp(str->container, "in") == 0)
         return IN;
+    if (lex->prevprev == FOR) {
+        if (strcmp(str->container, "in") == 0)
+            return IN;
+        if (strcmp(str->container, "do") == 0)
+            return DO;
+    }
+    if (eligible_name && lex->prev == FOR) {
+        if (lex->prev == FOR)
+            return NAME;
+    }
+
+    /* TODO handle correctly */
     if (eligible_assignment_word)
         return ASSIGNMENT_WORD;
-    if (eligible_name)
-        return NAME;
     if (eligible_io_number)
         return IO_NUMBER;
 
@@ -234,43 +298,35 @@ struct token lexer_next(struct lexer *lex)
     switch (c) {
     case '(': /* fallthrough */
     case ')':
-        printf("%c ", c);
         result.token = c;
         break;
     case '\n':
-        printf("\n");
         result.token = NEWLINE;
         break;
     case '&':
         c = getc(lex->stream);
         if (c == '&') {
-            printf("AND_IF ");
             result.token = AND_IF;
         } else {
             ungetc(c, lex->stream);
-            printf("& ");
             result.token = '&';
         }
         break;
     case '|':
         c = getc(lex->stream);
         if (c == '|') {
-            printf("OR_IF ");
             result.token = OR_IF;
         } else {
             ungetc(c, lex->stream);
-            printf("| ");
             result.token = '|';
         }
         break;
     case ';':
         c = getc(lex->stream);
         if (c == ';') {
-            printf("DSEMI ");
             result.token = DSEMI;
         } else {
             ungetc(c, lex->stream);
-            printf("; ");
             result.token = ';';
         }
         break;
@@ -279,38 +335,29 @@ struct token lexer_next(struct lexer *lex)
         if (c == '<') {
             c = getc(lex->stream);
             if (c == '-') {
-                printf("DLESSDASH ");
                 result.token = DLESSDASH;
             } else {
                 ungetc(c, lex->stream);
-                printf("DLESS ");
                 result.token = DLESS;
             }
         } else if (c == '&') {
-            printf("LESSAND ");
             result.token = LESSAND;
         } else if (c == '>') {
-            printf("LESSGREAT ");
             result.token = LESSGREAT;
         } else {
-            printf("< ");
             result.token = '<';
         }
         break;
     case '>':
         c = getc(lex->stream);
         if (c == '>') {
-            printf("DGREAT ");
             result.token = DGREAT;
         } else if (c == '&') {
-            printf("GREATAND ");
             result.token = GREATAND;
         } else if (c == '|') {
-            printf("CLOBBER ");
             result.token = CLOBBER;
         } else {
             ungetc(c, lex->stream);
-            printf("> ");
             result.token = '>';
         }
         break;
@@ -318,15 +365,12 @@ struct token lexer_next(struct lexer *lex)
         while (c != '\n' && c != EOF)
             c = getc(lex->stream);
         if (c == '\n') {
-            printf("\n");
             result.token = NEWLINE;
         } else {
-            printf("DONE\n");
             result.token = EOF;
         }
         break;
     case EOF:
-        printf("DONE\n");
         result.token = EOF;
         break;
     default: /* recognize a WORD, NAME, IO_NUMBER, or ASSIGNMENT_WORD */
@@ -345,72 +389,11 @@ struct token lexer_next(struct lexer *lex)
         delimit_token(lex, &str, DEL_DEFAULT);
         string_append(&str, 0);
         result.value = str.container;
-        result.token = recognize_token(&str);
-
-        switch (result.token) {
-        case WORD:
-            printf("WORD(%s) ", str.container);
-            break;
-        case NAME:
-            printf("NAME(%s) ", str.container);
-            break;
-        case ASSIGNMENT_WORD:
-            printf("ASSIGNMENT_WORD(%s) ", str.container);
-            break;
-        case IO_NUMBER:
-            printf("IO_NUMBER(%s) ", str.container);
-            break;
-        case IF:
-            printf("IF ");
-            break;
-        case THEN:
-            printf("THEN ");
-            break;
-        case ELSE:
-            printf("ELSE ");
-            break;
-        case ELIF:
-            printf("ELIF ");
-            break;
-        case FI:
-            printf("FI ");
-            break;
-        case DO:
-            printf("DO ");
-            break;
-        case DONE:
-            printf("DONE ");
-            break;
-        case CASE:
-            printf("CASE ");
-            break;
-        case ESAC:
-            printf("ESAC ");
-            break;
-        case WHILE:
-            printf("WHILE ");
-            break;
-        case UNTIL:
-            printf("UNTIL ");
-            break;
-        case FOR:
-            printf("FOR ");
-            break;
-        case LBRACE:
-            printf("LBRACE ");
-            break;
-        case RBRACE:
-            printf("RBRACE ");
-            break;
-        case BANG:
-            printf("BANG ");
-            break;
-        case IN:
-            printf("IN ");
-            break;
-        }
+        result.token = recognize_token(lex, &str);
     }
     }
 
+    lex->prevprev = lex->prev;
+    lex->prev = result.token;
     return result;
 }

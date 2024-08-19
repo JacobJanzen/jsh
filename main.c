@@ -78,7 +78,11 @@ int main(int argc, char **argv)
         file = stdin;
     }
 
-    struct lexer lex = {.stream = file};
+    struct lexer lex = {
+        .stream = file,
+        .prev = 0,
+        .prevprev = 0,
+    };
     grammar_parse(&lex);
     fclose(file);
     return 0;
