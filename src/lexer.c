@@ -1,5 +1,4 @@
 #include "lexer.h"
-#include "grammar.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,8 +21,6 @@ struct string {
     size_t capacity;
 };
 
-FILE *file;
-
 static void string_append(struct string *s, char c)
 {
     if (s->size == s->capacity) {
@@ -38,16 +35,17 @@ static int is_blank(char c)
     return c == ' ' || c == '\t' || c == '\f' || c == '\v' || c == '\r';
 }
 
-static void delimit_token(struct string *str, enum delimiter del)
+static void delimit_token(struct lexer *lex, struct string *str,
+                          enum delimiter del)
 {
     while (1) {
-        int c = getc(file);
+        int c = getc(lex->stream);
 
         switch (c) {
         case EOF: /* exit on EOF */
             return;
         case '\\': /* handle escape character */
-            c = getc(file);
+            c = getc(lex->stream);
             switch (c) {
             case EOF:
                 return;
@@ -56,56 +54,64 @@ static void delimit_token(struct string *str, enum delimiter del)
             default:
                 string_append(str, c);
             }
+            break;
         case '\'': /* enter/exit single quote */
             string_append(str, c);
             if (del == DEL_QUOTE)
                 return;
-            if (del != DEL_DQUOTE)
-                delimit_token(str, DEL_QUOTE);
+            if (del != DEL_DQUOTE && del != DEL_BRACE)
+                delimit_token(lex, str, DEL_QUOTE);
             break;
         case '\"': /* enter/exit double quote */
             string_append(str, c);
             if (del == DEL_DQUOTE)
                 return;
             if (del != DEL_QUOTE)
-                delimit_token(str, DEL_DQUOTE);
+                delimit_token(lex, str, DEL_DQUOTE);
             break;
         case '`': /* enter/exit backquote */
             string_append(str, c);
             if (del == DEL_BQUOTE)
                 return;
             if (del != DEL_QUOTE)
-                delimit_token(str, DEL_BQUOTE);
+                delimit_token(lex, str, DEL_BQUOTE);
             break;
         case '$':
             string_append(str, c);
-            c = getc(file);
-            switch (c) {
-            case '{': /* enter paramter expansion */
-                string_append(str, c);
-                delimit_token(str, DEL_BRACE);
-                break;
-            case '(':
-                string_append(str, c);
-                c = getc(file);
-                if (c == '(') { /* enter arithmetic expansion */
+            if (del != DEL_QUOTE) {
+                c = getc(lex->stream);
+                switch (c) {
+                case '{': /* enter paramter expansion */
                     string_append(str, c);
-                    delimit_token(str, DEL_DPAR);
-                } else { /* enter command substitution */
-                    ungetc(c, file);
-                    delimit_token(str, DEL_PAR);
+                    delimit_token(lex, str, DEL_BRACE);
+                    break;
+                case '(':
+                    string_append(str, c);
+                    c = getc(lex->stream);
+                    if (c == '(') { /* enter arithmetic expansion */
+                        string_append(str, c);
+                        delimit_token(lex, str, DEL_DPAR);
+                    } else { /* enter command substitution */
+                        ungetc(c, lex->stream);
+                        delimit_token(lex, str, DEL_PAR);
+                    }
+                    break;
+                default:
+                    ungetc(c, lex->stream);
                 }
-                break;
-            default:
-                ungetc(c, file);
             }
+            break;
+        case '(':
+            if (del == DEL_DEFAULT) /* special character; exit by default */
+                return;
+            string_append(str, c);
             break;
         case ')':
             if (del == DEL_DEFAULT) /* special character; exit by default */
                 return;
             string_append(str, c);
             if (del == DEL_DPAR) { /* exit arithmetic expansion */
-                delimit_token(str, DEL_PAR);
+                delimit_token(lex, str, DEL_PAR);
                 return;
             }
             if (del == DEL_PAR) /* exit command substitution */
@@ -119,8 +125,8 @@ static void delimit_token(struct string *str, enum delimiter del)
         case '#': /* enter comment */
             if (del == DEL_DEFAULT || del == DEL_PAR) {
                 while (c != '\n' && c != EOF)
-                    c = getc(file);
-                ungetc(c, file);
+                    c = getc(lex->stream);
+                ungetc(c, lex->stream);
             } else
                 string_append(str, c);
             break;
@@ -136,7 +142,7 @@ static void delimit_token(struct string *str, enum delimiter del)
         case '\r': /* fallthrough */
         case '\n':
             if (del == DEL_DEFAULT) { /* exit default environment */
-                ungetc(c, file);
+                ungetc(c, lex->stream);
                 return;
             }
             string_append(str, c);
@@ -147,101 +153,182 @@ static void delimit_token(struct string *str, enum delimiter del)
     }
 }
 
-static int recognize_token(struct string *str) { return WORD; }
-
-int yylex(void)
+static int recognize_token(struct string *str)
 {
-    int c = getc(file);
+    if (str->size == 0)
+        return ERROR;
+    if (str->container[0] == '=')
+        return WORD;
+
+    int eligible_name = 1;
+    int eligible_io_number = 1;
+    int eligible_assignment_word = 0;
+    if ((str->container[0] <= 'a' || str->container[0] >= 'z') &&
+        (str->container[0] <= 'A' || str->container[0] >= 'Z') &&
+        str->container[0] != '_')
+        eligible_name = 0;
+    for (size_t i = 0; i < str->size; ++i) {
+        if (str->container[i] == '=' && eligible_name)
+            eligible_assignment_word = 1;
+        if (str->container[i] <= '0' || str->container[i] >= '9') {
+            eligible_io_number = 0;
+            if ((str->container[0] <= 'a' || str->container[0] >= 'z') &&
+                (str->container[0] <= 'A' || str->container[0] >= 'Z') &&
+                str->container[0] != '_')
+                eligible_name = 0;
+        }
+    }
+
+    if (strcmp(str->container, "if") == 0)
+        return IF;
+    if (strcmp(str->container, "then") == 0)
+        return THEN;
+    if (strcmp(str->container, "else") == 0)
+        return ELSE;
+    if (strcmp(str->container, "elif") == 0)
+        return ELIF;
+    if (strcmp(str->container, "fi") == 0)
+        return FI;
+    if (strcmp(str->container, "do") == 0)
+        return DO;
+    if (strcmp(str->container, "done") == 0)
+        return DONE;
+    if (strcmp(str->container, "case") == 0)
+        return CASE;
+    if (strcmp(str->container, "esac") == 0)
+        return ESAC;
+    if (strcmp(str->container, "while") == 0)
+        return WHILE;
+    if (strcmp(str->container, "until") == 0)
+        return UNTIL;
+    if (strcmp(str->container, "for") == 0)
+        return FOR;
+    if (strcmp(str->container, "{") == 0)
+        return LBRACE;
+    if (strcmp(str->container, "}") == 0)
+        return RBRACE;
+    if (strcmp(str->container, "!") == 0)
+        return BANG;
+    if (strcmp(str->container, "in") == 0)
+        return IN;
+    if (eligible_assignment_word)
+        return ASSIGNMENT_WORD;
+    if (eligible_name)
+        return NAME;
+    if (eligible_io_number)
+        return IO_NUMBER;
+
+    return WORD;
+}
+
+struct token lexer_next(struct lexer *lex)
+{
+    int c = getc(lex->stream);
 
     /* skip whitespace */
     while (is_blank(c))
-        c = getc(file);
+        c = getc(lex->stream);
 
     /* determine token */
+    struct token result = {.token = ERROR, .value = NULL};
     switch (c) {
     case '(': /* fallthrough */
     case ')':
-        printf("%c", c);
-        return c;
+        printf("%c ", c);
+        result.token = c;
+        break;
     case '\n':
         printf("\n");
-        return NEWLINE;
+        result.token = NEWLINE;
+        break;
     case '&':
-        c = getc(file);
+        c = getc(lex->stream);
         if (c == '&') {
             printf("AND_IF ");
-            return AND_IF; /* && */
+            result.token = AND_IF;
+        } else {
+            ungetc(c, lex->stream);
+            printf("& ");
+            result.token = '&';
         }
-        ungetc(c, file);
-        printf("& ");
-        return '&';
+        break;
     case '|':
-        c = getc(file);
+        c = getc(lex->stream);
         if (c == '|') {
             printf("OR_IF ");
-            return OR_IF; /* || */
+            result.token = OR_IF;
+        } else {
+            ungetc(c, lex->stream);
+            printf("| ");
+            result.token = '|';
         }
-        ungetc(c, file);
-        printf("| ");
-        return '|';
+        break;
     case ';':
-        c = getc(file);
+        c = getc(lex->stream);
         if (c == ';') {
             printf("DSEMI ");
-            return DSEMI; /* ;; */
+            result.token = DSEMI;
+        } else {
+            ungetc(c, lex->stream);
+            printf("; ");
+            result.token = ';';
         }
-        ungetc(c, file);
-        printf("; ");
-        return ';';
+        break;
     case '<':
-        c = getc(file);
+        c = getc(lex->stream);
         if (c == '<') {
-            c = getc(file);
+            c = getc(lex->stream);
             if (c == '-') {
                 printf("DLESSDASH ");
-                return DLESSDASH; /* <<- */
+                result.token = DLESSDASH;
+            } else {
+                ungetc(c, lex->stream);
+                printf("DLESS ");
+                result.token = DLESS;
             }
-            ungetc(c, file);
-            printf("DLESS ");
-            return DLESS; /* << */
-        }
-        if (c == '&') {
+        } else if (c == '&') {
             printf("LESSAND ");
-            return LESSAND; /* <& */
-        }
-        if (c == '>') {
+            result.token = LESSAND;
+        } else if (c == '>') {
             printf("LESSGREAT ");
-            return LESSGREAT; /* <> */
+            result.token = LESSGREAT;
+        } else {
+            printf("< ");
+            result.token = '<';
         }
-        printf("< ");
-        return '<';
+        break;
     case '>':
-        c = getc(file);
+        c = getc(lex->stream);
         if (c == '>') {
             printf("DGREAT ");
-            return DGREAT; /* >> */
-        }
-        if (c == '&') {
+            result.token = DGREAT;
+        } else if (c == '&') {
             printf("GREATAND ");
-            return GREATAND; /* >& */
-        }
-        if (c == '|') {
+            result.token = GREATAND;
+        } else if (c == '|') {
             printf("CLOBBER ");
-            return CLOBBER; /* >| */
+            result.token = CLOBBER;
+        } else {
+            ungetc(c, lex->stream);
+            printf("> ");
+            result.token = '>';
         }
-        ungetc(c, file);
-        printf("> ");
-        return '>';
+        break;
     case '#':
         while (c != '\n' && c != EOF)
-            c = getc(file);
-        if (c == '\n')
-            return NEWLINE;
-        if (c == EOF)
-            return YYEOF;
+            c = getc(lex->stream);
+        if (c == '\n') {
+            printf("\n");
+            result.token = NEWLINE;
+        } else {
+            printf("DONE\n");
+            result.token = EOF;
+        }
+        break;
     case EOF:
-        printf("DONE ");
-        return YYEOF;
+        printf("DONE\n");
+        result.token = EOF;
+        break;
     default: /* recognize a WORD, NAME, IO_NUMBER, or ASSIGNMENT_WORD */
     {
         /* create a string to store the token in */
@@ -251,25 +338,79 @@ int yylex(void)
         str.container = malloc(DEFAULT_CAPACITY);
         if (!str.container) {
             perror("malloc");
-            return ERROR;
+            result.token = ERROR;
         }
 
-        ungetc(c, file);
-        delimit_token(&str, DEL_DEFAULT);
+        ungetc(c, lex->stream);
+        delimit_token(lex, &str, DEL_DEFAULT);
         string_append(&str, 0);
-        printf("WORD(%s) ", str.container);
-        free(str.container);
-        return recognize_token(&str);
+        result.value = str.container;
+        result.token = recognize_token(&str);
+
+        switch (result.token) {
+        case WORD:
+            printf("WORD(%s) ", str.container);
+            break;
+        case NAME:
+            printf("NAME(%s) ", str.container);
+            break;
+        case ASSIGNMENT_WORD:
+            printf("ASSIGNMENT_WORD(%s) ", str.container);
+            break;
+        case IO_NUMBER:
+            printf("IO_NUMBER(%s) ", str.container);
+            break;
+        case IF:
+            printf("IF ");
+            break;
+        case THEN:
+            printf("THEN ");
+            break;
+        case ELSE:
+            printf("ELSE ");
+            break;
+        case ELIF:
+            printf("ELIF ");
+            break;
+        case FI:
+            printf("FI ");
+            break;
+        case DO:
+            printf("DO ");
+            break;
+        case DONE:
+            printf("DONE ");
+            break;
+        case CASE:
+            printf("CASE ");
+            break;
+        case ESAC:
+            printf("ESAC ");
+            break;
+        case WHILE:
+            printf("WHILE ");
+            break;
+        case UNTIL:
+            printf("UNTIL ");
+            break;
+        case FOR:
+            printf("FOR ");
+            break;
+        case LBRACE:
+            printf("LBRACE ");
+            break;
+        case RBRACE:
+            printf("RBRACE ");
+            break;
+        case BANG:
+            printf("BANG ");
+            break;
+        case IN:
+            printf("IN ");
+            break;
+        }
     }
     }
 
-    return 0;
-}
-
-void yyerror(char const *s) { fprintf(stderr, "%s\n", s); }
-
-int yyparse_wrapper(FILE *f)
-{
-    file = f;
-    return yyparse();
+    return result;
 }

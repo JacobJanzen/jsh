@@ -9,11 +9,10 @@ struct stack {
     size_t capacity;
 };
 
-struct stack *stack_create(void);
+struct stack stack_create(void);
 void stack_free(struct stack *);
 
 void *stack_pop(struct stack *);
-void *stack_peek(struct stack *);
 void stack_push(struct stack *, void *);
 
 #endif /* STACK_H_ */

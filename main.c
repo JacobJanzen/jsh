@@ -1,5 +1,6 @@
 #include "config.h"
-#include "lexer.h"
+#include "grammar.h"
+#include "src/grammar.h"
 #include <getopt.h>
 #include <stdio.h>
 #include <string.h>
@@ -77,5 +78,8 @@ int main(int argc, char **argv)
         file = stdin;
     }
 
-    return yyparse_wrapper(file);
+    struct lexer lex = {.stream = file};
+    grammar_parse(&lex);
+    fclose(file);
+    return 0;
 }
